@@ -1,0 +1,235 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+# Python version: 3.9
+
+from asyncio.constants import SENDFILE_FALLBACK_READBUFFER_SIZE
+import copy
+import pickle
+import socket,ssl
+from threading import Thread,Lock, local
+import json
+import time
+
+import numpy as np
+import pandas as pd
+import torch
+
+from utils.options import args_parser
+from utils.send_recv_utils import recv_msg, send_msg
+from utils.train_utils import get_data, get_model
+from models.Update import LocalUpdate
+from models.test import test_img
+import os
+import logging
+# logging.basicConfig(format='%(asctime)s %(message)s', level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
+
+CLOUD_ADDRESS_PORT = ("127.0.0.1", 8700)
+BUF_SIZE = 1024
+g_socket_server = None
+g_conn_pool = {}
+
+# parse argsclient
+args = args_parser()
+args.device = torch.device('cuda:{}'.format(args.gpu) if torch.cuda.is_available() and args.gpu != -1 else 'cpu')
+# args.device = "cpu"
+base_dir = './save/{}/{}_iid{}_num{}_C{}_le{}/shard{}/{}/'.format(
+    args.dataset, args.model, args.iid, args.num_users, args.frac, args.local_ep, args.shard_per_user, args.results_save)
+if not os.path.exists(os.path.join(base_dir, 'fed')):
+    os.makedirs(os.path.join(base_dir, 'fed'), exist_ok=True)
+
+dataset_train, dataset_test, dict_users_train, dict_users_test = get_data(args)
+dict_save_path = os.path.join(base_dir, 'dict_users.pkl')
+with open(dict_save_path, 'wb') as handle:
+    pickle.dump((dict_users_train, dict_users_test), handle)
+
+# build model
+net_glob = get_model(args)  # 云端模型
+net_glob.train()
+
+# training
+loss_train = []
+net_best = None
+best_loss = None
+best_acc = None
+best_epoch = None
+lr = args.lr
+results = []
+results_save_path = os.path.join(base_dir, 'fed/results.csv')
+
+w_glob = None       # 参数，训练聚合时使用
+loss_locals = []    # loss，训练聚合时使用
+edge_count = 0
+global_round = 0    # 当前全局模型所在轮数
+choosen_this_round = [0]
+m = 1
+
+def init():
+    """
+    初始化服务端
+    """
+    global g_socket_server
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  
+    sock.bind(CLOUD_ADDRESS_PORT)
+    sock.listen(100)  # 最大等待数（有很多人理解为最大连接数，其实是错误的）
+    # 配置TLS
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain("cert/cert.pem", "cert/key.pem")
+    g_socket_server = context.wrap_socket(sock, server_side=True)
+    print("server已启动，正在等待来自client的连接...")
+
+def accept_client():
+    global edge_count
+    """
+    接收新连接
+    """
+    while True:
+        client, info = g_socket_server.accept()  # 阻塞
+        # 注册client
+        g_conn_pool[edge_count] = client
+        # 给每个客户端创建一个独立的线程调用message_handle()进行管理
+        thread = Thread(target=message_handle, args=(client, info, edge_count), daemon=True)
+        thread.start()
+        edge_count += 1
+
+
+def message_handle(client, info, edge_id):
+    """
+    消息处理，由accept_client()创建的线程进行调用
+    """
+    global dict_users_train, dict_users_test, global_round, net_glob, w_glob, loss_locals
+    send_msg(client, "连接成功".encode("utf-8"))
+    local_round = global_round # 加入联邦学习的初始化
+    """先用cloud代替edge模拟发数据吧"""
+    dict_user = {
+        "train": dict_users_train[edge_id],
+        "test": dict_users_test[edge_id]
+    }
+    send_msg(client, pickle.dumps(dict_user))
+
+    while True:
+        try:
+            """
+            每轮client先检查上一轮聚合已经完成，然后发送全局参数，检查自己是否被选择，然后等待被选中的edge训练完成后发送局部参数
+            """
+            # 检查上一轮是否已经完成
+            while local_round != global_round:
+                time.sleep(0.1)
+                pass
+
+            # 发送全局参数
+            send_msg(client, pickle.dumps({
+                "round": local_round,
+                "state": net_glob.state_dict()
+                # "state":123
+                }))
+            logging.info(f"Round = {local_round} 向 edge_id = {edge_id} 发送全局变量")
+            local_round += 1
+
+            # 发送client此轮是否被选中
+            if edge_id in choosen_this_round:
+                print("进了没")
+                send_msg(client, pickle.dumps({"choosen": True}))
+                logging.debug(f"edge_id = {edge_id} 被选择")
+                # 接受来自边缘服务器的参数和loss
+                data = pickle.loads(recv_msg(client))
+                logging.info(f"接收到来自 edge_id = {edge_id} 的 weight&loss")
+                # 加入参数
+                w_local = data["w_local"]
+                if w_glob is None:
+                    w_glob = copy.deepcopy(w_local)
+                else:
+                    for k in w_glob.keys():
+                        w_glob[k] += w_local[k]
+                # 加入loss
+                loss_local = data["loss_local"]
+                loss_locals.append(loss_local)
+                # logging.debug(len(loss_locals))
+            else:
+                send_msg(client, pickle.dumps({"choosen": True}))  
+
+        except Exception as e:
+            print(e)
+            remove_client(edge_id)
+            break
+
+def remove_client(edge_id):
+    """
+    移除client，由accept_client()创建的线程在进行message_handle()时进行调用
+    """
+    client = g_conn_pool[edge_id]
+    if None != client:
+        client.close()
+        g_conn_pool.pop(edge_id)
+        logging.info("client已离线：", edge_id)
+
+
+if __name__ == '__main__':
+    init()
+    # 新创建一个线程，用于接收新连接
+    thread = Thread(target=accept_client, daemon=True)
+    thread.start()
+
+    # 第一轮需要初始化
+    m = max(1, min(args.num_users, edge_count) * args.frac)    # 选择client的数量
+    choosen_this_round = np.random.choice(range(edge_count+1), m, replace=False)
+    logging.info(f"Round = {global_round} 选择 {choosen_this_round} 参与训练")
+
+    while global_round <= args.epochs:
+        """
+        自旋检查每轮是否完成，随机选择下一轮参与的client，在合适时间进行test和save
+        """
+        while len(loss_locals) != m:
+            # logging.debug(len(loss_locals))
+            time.sleep(0.1)
+
+        # 只有当接受到所有被选择的client传来的参数，并完成聚合，选择下一轮参与的client才进入下一轮
+        # learning rate 衰减
+        lr *= args.lr_decay
+
+        # 更新全局梯度
+        for k in w_glob.keys():
+            w_glob[k] = torch.div(w_glob[k], m)
+        net_glob.load_state_dict(w_glob)
+        
+        # 更新全局loss
+        loss_avg = sum(loss_locals) / len(loss_locals)
+        loss_train.append(loss_avg)
+        
+        # 选择下一轮参与的用户
+        m = int(max(1, min(args.num_users, edge_count)*args.frac))    # 选择下一轮参与的用户
+        choosen_this_round = np.random.choice(range(edge_count+1), m, replace=False)
+
+        # test和save
+        if (global_round + 1) % args.test_freq == 0:
+            net_glob.eval()
+            acc_test, loss_test = test_img(net_glob, dataset_test, args)
+            print('Round {:3d}, Average loss {:.3f}, Test loss {:.3f}, Test accuracy: {:.2f}'.format(
+                global_round, loss_avg, loss_test, acc_test))
+                
+
+            if best_acc is None or acc_test > best_acc:
+                net_best = copy.deepcopy(net_glob)
+                best_acc = acc_test
+                best_epoch = global_round
+
+            results.append(np.array([global_round, loss_avg, loss_test, acc_test, best_acc]))
+            final_results = np.array(results)
+            final_results = pd.DataFrame(final_results, columns=['epoch', 'loss_avg', 'loss_test', 'acc_test', 'best_acc'])
+            final_results.to_csv(results_save_path, index=False)
+
+        if (global_round + 1) % 50 == 0:
+            best_save_path = os.path.join(base_dir, 'fed/best_{}.pt'.format(global_round + 1))
+            model_save_path = os.path.join(base_dir, 'fed/model_{}.pt'.format(global_round + 1))
+            torch.save(net_best.state_dict(), best_save_path)
+            torch.save(net_glob.state_dict(), model_save_path)
+
+        # 进入下一轮
+        global_round += 1
+        w_glob = None
+        loss_locals = []
+        logging.info(f"进入下一轮： round = {global_round}")
+        
+    
+    # 结束
+    print('Best model, round: {}, acc: {}'.format(best_epoch, best_acc))
