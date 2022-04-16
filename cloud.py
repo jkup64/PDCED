@@ -6,7 +6,7 @@ from asyncio.constants import SENDFILE_FALLBACK_READBUFFER_SIZE
 import copy
 import pickle
 import socket,ssl
-from threading import Thread,Lock, local
+from threading import Thread,Lock
 import json
 import time
 
@@ -121,7 +121,6 @@ def message_handle(client, info, edge_id):
             send_msg(client, pickle.dumps({
                 "round": local_round,
                 "state": net_glob.state_dict()
-                # "state":123
                 }))
             logging.info(f"Round = {local_round} 向 edge_id = {edge_id} 发送全局变量")
             local_round += 1
@@ -198,7 +197,8 @@ if __name__ == '__main__':
         
         # 选择下一轮参与的用户
         m = int(max(1, min(args.num_users, edge_count)*args.frac))    # 选择下一轮参与的用户
-        choosen_this_round = np.random.choice(range(edge_count+1), m, replace=False)
+        choosen_this_round = np.random.choice(range(edge_count), m, replace=False)
+        logging.info(f"Round = {global_round} 选择 {choosen_this_round} 参与训练")
 
         # test和save
         if (global_round + 1) % args.test_freq == 0:
@@ -225,10 +225,10 @@ if __name__ == '__main__':
             torch.save(net_glob.state_dict(), model_save_path)
 
         # 进入下一轮
-        global_round += 1
         w_glob = None
         loss_locals = []
         logging.info(f"进入下一轮： round = {global_round}")
+        global_round += 1
         
     
     # 结束
