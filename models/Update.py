@@ -26,14 +26,15 @@ class LocalUpdate(object):
     def __init__(self, args, dataset=None, idxs=None, pretrain=False):
         self.args = args
         self.loss_func = nn.CrossEntropyLoss()
-        self.selected_clients = []
+        # self.selected_clients = []
         self.ldr_train = DataLoader(DatasetSplit(dataset, idxs), batch_size=self.args.local_bs, shuffle=True)
         self.pretrain = pretrain
 
     def train(self, net, idx=-1, lr=0.1):
         net.train()
         # train and update
-        optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.5)
+        optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=self.args.momentum)
+        # optimizer = torch.optim.Adam(net.parameters())
 
         epoch_loss = []
         if self.pretrain:
@@ -46,7 +47,6 @@ class LocalUpdate(object):
                 images, labels = images.to(self.args.device), labels.to(self.args.device)
                 net.zero_grad()
                 log_probs = net(images)
-
                 loss = self.loss_func(log_probs, labels)
                 loss.backward()
                 optimizer.step()
@@ -62,14 +62,14 @@ class LocalUpdateMTL(object):
     def __init__(self, args, dataset=None, idxs=None, pretrain=False):
         self.args = args
         self.loss_func = nn.CrossEntropyLoss()
-        self.selected_clients = []
+        # self.selected_clients = []
         self.ldr_train = DataLoader(DatasetSplit(dataset, idxs), batch_size=self.args.local_bs, shuffle=True)
         self.pretrain = pretrain
 
     def train(self, net, lr=0.1, omega=None, W_glob=None, idx=None, w_glob_keys=None):
         net.train()
         # train and update
-        optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.5)
+        optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.1)
 
         epoch_loss = []
         if self.pretrain:

@@ -22,7 +22,7 @@ from models.test import test_img
 import os
 import logging
 # logging.basicConfig(format='%(asctime)s %(message)s', level=logging.DEBUG)
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 CLOUD_ADDRESS_PORT = ("127.0.0.1", 8700)
 BUF_SIZE = 1024
@@ -32,7 +32,6 @@ g_conn_pool = {}
 # parse argsclient
 args = args_parser()
 args.device = torch.device('cuda:{}'.format(args.gpu) if torch.cuda.is_available() and args.gpu != -1 else 'cpu')
-# args.device = "cpu"
 base_dir = './save/{}/{}_iid{}_num{}_C{}_le{}/shard{}/{}/'.format(
     args.dataset, args.model, args.iid, args.num_users, args.frac, args.local_ep, args.shard_per_user, args.results_save)
 if not os.path.exists(os.path.join(base_dir, 'fed')):
@@ -92,12 +91,11 @@ def accept_client():
         thread.start()
         edge_count += 1
 
-
 def message_handle(client, info, edge_id):
     """
     消息处理，由accept_client()创建的线程进行调用
     """
-    global dict_users_train, dict_users_test, global_round, net_glob, w_glob, loss_locals
+    global dict_users_train, dict_users_test, global_round, net_glob, w_glob, loss_locals,lr
     send_msg(client, "连接成功".encode("utf-8"))
     local_round = global_round # 加入联邦学习的初始化
     """先用cloud代替edge模拟发数据吧"""
@@ -120,19 +118,19 @@ def message_handle(client, info, edge_id):
             # 发送全局参数
             send_msg(client, pickle.dumps({
                 "round": local_round,
-                "state": net_glob.state_dict()
+                "state": net_glob.state_dict(),
+                "lr":lr
                 }))
-            logging.info(f"Round = {local_round} 向 edge_id = {edge_id} 发送全局变量")
+            logging.debug(f"Round = {local_round} 向 edge_id = {edge_id} 发送全局变量和学习率")
             local_round += 1
 
             # 发送client此轮是否被选中
             if edge_id in choosen_this_round:
-                print("进了没")
                 send_msg(client, pickle.dumps({"choosen": True}))
                 logging.debug(f"edge_id = {edge_id} 被选择")
                 # 接受来自边缘服务器的参数和loss
                 data = pickle.loads(recv_msg(client))
-                logging.info(f"接收到来自 edge_id = {edge_id} 的 weight&loss")
+                logging.debug(f"接收到来自 edge_id = {edge_id} 的 weight&loss")
                 # 加入参数
                 w_local = data["w_local"]
                 if w_glob is None:
@@ -165,71 +163,74 @@ def remove_client(edge_id):
 
 if __name__ == '__main__':
     init()
-    # 新创建一个线程，用于接收新连接
-    thread = Thread(target=accept_client, daemon=True)
-    thread.start()
+    try:
+        # 新创建一个线程，用于接收新连接
+        thread = Thread(target=accept_client, daemon=True)
+        thread.start()
 
-    # 第一轮需要初始化
-    m = max(1, min(args.num_users, edge_count) * args.frac)    # 选择client的数量
-    choosen_this_round = np.random.choice(range(edge_count+1), m, replace=False)
-    logging.info(f"Round = {global_round} 选择 {choosen_this_round} 参与训练")
+        # 第一轮需要初始化
+        m = max(1, min(args.num_users, edge_count) * args.frac)    # 选择client的数量
+        choosen_this_round = np.random.choice(range(edge_count+1), m, replace=False)
+        # logging.info(f"Round = {global_round} 选择 {choosen_this_round} 参与训练")
 
-    while global_round <= args.epochs:
-        """
-        自旋检查每轮是否完成，随机选择下一轮参与的client，在合适时间进行test和save
-        """
-        while len(loss_locals) != m:
-            # logging.debug(len(loss_locals))
-            time.sleep(0.1)
+        while global_round <= args.epochs:
+            """
+            自旋检查每轮是否完成，随机选择下一轮参与的client，在合适时间进行test和save
+            """
+            while len(loss_locals) != m:
+                # logging.debug(len(loss_locals))
+                time.sleep(0.1)
 
-        # 只有当接受到所有被选择的client传来的参数，并完成聚合，选择下一轮参与的client才进入下一轮
-        # learning rate 衰减
-        lr *= args.lr_decay
+            # 只有当接受到所有被选择的client传来的参数，并完成聚合，选择下一轮参与的client才进入下一轮
+            # learning rate 衰减
+            lr *= args.lr_decay
 
-        # 更新全局梯度
-        for k in w_glob.keys():
-            w_glob[k] = torch.div(w_glob[k], m)
-        net_glob.load_state_dict(w_glob)
-        
-        # 更新全局loss
-        loss_avg = sum(loss_locals) / len(loss_locals)
-        loss_train.append(loss_avg)
-        
-        # 选择下一轮参与的用户
-        m = int(max(1, min(args.num_users, edge_count)*args.frac))    # 选择下一轮参与的用户
-        choosen_this_round = np.random.choice(range(edge_count), m, replace=False)
-        logging.info(f"Round = {global_round} 选择 {choosen_this_round} 参与训练")
+            # 更新全局梯度
+            for k in w_glob.keys():
+                w_glob[k] = torch.div(w_glob[k], m)
+            net_glob.load_state_dict(w_glob)
+            
+            # 更新全局loss
+            loss_avg = sum(loss_locals) / len(loss_locals)
+            loss_train.append(loss_avg)
+            
+            # 选择下一轮参与的用户
+            m = int(max(1, min(args.num_users, edge_count)*args.frac))    # 选择下一轮参与的用户
+            choosen_this_round = np.random.choice(range(edge_count), m, replace=False)
+            logging.info(f"Round = {global_round} 选择 {choosen_this_round} 参与训练 lr = {lr}")
 
-        # test和save
-        if (global_round + 1) % args.test_freq == 0:
-            net_glob.eval()
-            acc_test, loss_test = test_img(net_glob, dataset_test, args)
-            print('Round {:3d}, Average loss {:.3f}, Test loss {:.3f}, Test accuracy: {:.2f}'.format(
-                global_round, loss_avg, loss_test, acc_test))
-                
+            # test和save
+            if (global_round + 1) % args.test_freq == 0:
+                net_glob.eval()
+                acc_test, loss_test = test_img(net_glob, dataset_test, args)
+                print('Round {:3d}, Average loss {:.3f}, Test loss {:.3f}, Test accuracy: {:.3f}'.format(
+                    global_round, loss_avg, loss_test, acc_test))
+                    
 
-            if best_acc is None or acc_test > best_acc:
-                net_best = copy.deepcopy(net_glob)
-                best_acc = acc_test
-                best_epoch = global_round
+                if best_acc is None or acc_test > best_acc:
+                    net_best = copy.deepcopy(net_glob)
+                    best_acc = acc_test
+                    best_epoch = global_round
 
-            results.append(np.array([global_round, loss_avg, loss_test, acc_test, best_acc]))
-            final_results = np.array(results)
-            final_results = pd.DataFrame(final_results, columns=['epoch', 'loss_avg', 'loss_test', 'acc_test', 'best_acc'])
-            final_results.to_csv(results_save_path, index=False)
+                results.append(np.array([global_round, loss_avg, loss_test, acc_test, best_acc]))
+                final_results = np.array(results)
+                final_results = pd.DataFrame(final_results, columns=['epoch', 'loss_avg', 'loss_test', 'acc_test', 'best_acc'])
+                final_results.to_csv(results_save_path, index=False)
 
-        if (global_round + 1) % 50 == 0:
-            best_save_path = os.path.join(base_dir, 'fed/best_{}.pt'.format(global_round + 1))
-            model_save_path = os.path.join(base_dir, 'fed/model_{}.pt'.format(global_round + 1))
-            torch.save(net_best.state_dict(), best_save_path)
-            torch.save(net_glob.state_dict(), model_save_path)
+            if (global_round + 1) % 50 == 0:
+                best_save_path = os.path.join(base_dir, 'fed/best_{}.pt'.format(global_round + 1))
+                model_save_path = os.path.join(base_dir, 'fed/model_{}.pt'.format(global_round + 1))
+                torch.save(net_best.state_dict(), best_save_path)
+                torch.save(net_glob.state_dict(), model_save_path)
 
-        # 进入下一轮
-        w_glob = None
-        loss_locals = []
-        logging.info(f"进入下一轮： round = {global_round}")
-        global_round += 1
-        
-    
-    # 结束
-    print('Best model, round: {}, acc: {}'.format(best_epoch, best_acc))
+            # 进入下一轮
+            w_glob = None
+            loss_locals = []
+            logging.debug(f"进入下一轮： round = {global_round}")
+            global_round += 1
+            
+        # 结束
+        print('Best model, round: {}, acc: {}'.format(best_epoch, best_acc))
+
+    finally:
+        g_socket_server.close()

@@ -73,19 +73,6 @@ class CNNCifar(nn.Module):
         self.fc2 = nn.Linear(120, 100)
         self.fc3 = nn.Linear(100, args.num_classes)
 
-        # self.weight_keys = [['fc3.weight', 'fc3.bias'],
-        #                     ['fc2.weight', 'fc2.bias'],
-        #                     ['fc1.weight', 'fc1.bias'],
-        #                     ['conv2.weight', 'conv2.bias'],
-        #                     ['conv1.weight', 'conv1.bias'],
-        #                     ]
-
-        # self.weight_keys = [['conv1.weight', 'conv1.bias'],
-        #                     ['conv2.weight', 'conv2.bias'],
-        #                     ['fc2.weight', 'fc2.bias'],
-        #                     ['fc3.weight', 'fc3.bias'],
-        #                     ['fc1.weight', 'fc1.bias'],
-        #                     ]
 
         self.weight_keys = [['fc1.weight', 'fc1.bias'],
                             ['fc2.weight', 'fc2.bias'],

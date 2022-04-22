@@ -64,6 +64,6 @@ def get_model(args):
         net_glob = MLP(dim_in=784, dim_hidden=256, dim_out=args.num_classes).to(args.device)
     else:
         exit('Error: unrecognized model')
-    print(net_glob)
+
 
     return net_glob

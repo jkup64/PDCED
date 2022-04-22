@@ -61,7 +61,7 @@ if __name__ == '__main__':
         best_acc = None
 
         ldr_train = DataLoader(DatasetSplit(dataset_train, dict_users_train[user]), batch_size=args.local_bs, shuffle=True)
-        optimizer = torch.optim.SGD(net_local.parameters(), lr=lr, momentum=0.5)
+        optimizer = torch.optim.SGD(net_local.parameters(), lr=lr, momentum=0.1)
         for iter in range(args.epochs):
             for batch_idx, (images, labels) in enumerate(ldr_train):
                 images, labels = images.to(args.device), labels.to(args.device)
