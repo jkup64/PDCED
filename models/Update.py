@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 # Python version: 3.6
 
+from itertools import accumulate
+from numpy import imag
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
@@ -34,13 +36,32 @@ class LocalUpdate(object):
         net.train()
         # train and update
         optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=self.args.momentum)
-        # optimizer = torch.optim.Adam(net.parameters())
 
         epoch_loss = []
         if self.pretrain:
             local_eps = self.args.local_ep_pretrain
         else:
             local_eps = self.args.local_ep
+        
+        # 上传梯度时，局部只更新1轮
+        # assert local_eps == 1
+        # batch_loss = []
+        # grads_local = []
+        # net.zero_grad()
+        # for batch_idex, (images, labels) in enumerate(self.ldr_train):
+        #     images, labels = images.to(self.args.device), labels.to(self.args.device)
+        #     log_probs = net(images)
+        #     loss = self.loss_func(log_probs, labels)
+        #     loss.backward()
+        #     batch_loss.append(loss.item())
+        #     # 获得梯度
+        #     for para in net.parameters():
+        #         # grads_local.append(torch.div(para.grad.detach(), len(batch_loss)))
+        #         grads_local.append(para.grad.detach()/len(batch_loss))
+        #     return grads_local, sum(batch_loss)/len(batch_loss)
+        
+        # 上传累积梯度
+        accumulated_grads_local = []
         for iter in range(local_eps):
             batch_loss = []
             for batch_idx, (images, labels) in enumerate(self.ldr_train):
@@ -50,12 +71,31 @@ class LocalUpdate(object):
                 loss = self.loss_func(log_probs, labels)
                 loss.backward()
                 optimizer.step()
-
+                # 累积梯度记录
+                if len(accumulated_grads_local) == 0:
+                    for para in net.parameters():
+                        accumulated_grads_local.append(para.grad.detach().clone())
+                else:
+                    for num, para in enumerate(net.parameters()):
+                        accumulated_grads_local[num] += para.grad
                 batch_loss.append(loss.item())
-
             epoch_loss.append(sum(batch_loss)/len(batch_loss))
+        return accumulated_grads_local, sum(epoch_loss)/len(epoch_loss)
 
-        return net.state_dict(), sum(epoch_loss) / len(epoch_loss)
+
+        # 上传参数
+        # for iter in range(local_eps):
+        #     batch_loss = []
+        #     for batch_idx, (images, labels) in enumerate(self.ldr_train):
+        #         images, labels = images.to(self.args.device), labels.to(self.args.device)
+        #         net.zero_grad()
+        #         log_probs = net(images)
+        #         loss = self.loss_func(log_probs, labels)
+        #         loss.backward()
+        #         optimizer.step()
+        #         batch_loss.append(loss.item())
+        #     epoch_loss.append(sum(batch_loss)/len(batch_loss))
+        # return net.state_dict(), sum(epoch_loss) / len(epoch_loss)
 
 
 class LocalUpdateMTL(object):

@@ -5,11 +5,9 @@ import ssl
 from threading import Thread
 import json
 import time
-
 import numpy as np
 import pandas as pd
 import torch
-
 from utils.options import args_parser
 from utils.train_utils import get_data, get_model
 from utils.send_recv_utils import *
@@ -23,7 +21,10 @@ logging.basicConfig(level=logging.INFO)
 CLOUD_ADDRESS_PORT = ('127.0.0.1', 8700)
 BUF_SIZE = 1024
 
-if "__main__" == __name__:
+def init():
+    """
+    解析配置文件，配置SSL,接收训练数据，初始化模型
+    """
     # parse argsclient
     args = args_parser()
     args.device = torch.device('cuda:{}'.format(args.gpu) if torch.cuda.is_available() and args.gpu != -1 else 'cpu')
@@ -35,7 +36,6 @@ if "__main__" == __name__:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     context.load_verify_locations("cert/cert.pem")
     edge_client = context.wrap_socket(sock, server_hostname="Cloud")
-
     welcome_msg = recv_msg(edge_client).decode()
     logging.info(welcome_msg)
 
@@ -58,6 +58,13 @@ if "__main__" == __name__:
     net_local = get_model(args)
     net_local.train()
     logging.info("模型初始化已完成")
+    return args, edge_client, dataset_train, dataset_test, idxs_train_local, idxs_test_local,net_local
+
+
+if "__main__" == __name__:
+    # 完成初始化配置
+    args, edge_client, dataset_train, dataset_test,\
+         idxs_train_local, idxs_test_local,net_local = init()
 
     while True:
         """
@@ -69,21 +76,21 @@ if "__main__" == __name__:
         net_globa_state_dict = round_state_lr["state"]
         lr = round_state_lr["lr"]
         logging.info(f"{local_round} 接收到来自cloud的全局模型参数")
-        logging.debug(f"Ground_loss = {net_globa_state_dict}")
         net_local.load_state_dict(net_globa_state_dict)
-
+        
+        # 根据自己本轮是否被选中，是否进行局部训练
         if pickle.loads(recv_msg(edge_client))["choosen"] == True:
             # 训练，获得局部参数和loss, 并发送给cloud
             logging.info(f"Round = {local_round} 参与训练")
             local = LocalUpdate(args=args, dataset=dataset_train, idxs=idxs_train_local)
-            w_local, loss_local = local.train(net=net_local.to(args.device), lr=lr)
+            grads_local, loss_local = local.train(net=net_local.to(args.device), lr=lr)
             send_msg(edge_client, pickle.dumps({
-                "w_local": w_local,
+                "grads_local": grads_local,
                 "loss_local": loss_local
             }))
-            logging.debug(f"w_local ={w_local}")
             logging.info(f"Round = {local_round} loss_local = {loss_local}")
-            logging.debug(f"Round = {local_round} 向server发送 weight&loss")
+            logging.debug(f"The grads_local[0] is {grads_local[0]}")
+            logging.debug(f"Round = {local_round} 向server发送 累积grads&loss")
         else:
             logging.debug(f"Round = {local_round} 未被选择参与训练")
             pass

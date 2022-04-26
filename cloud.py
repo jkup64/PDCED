@@ -56,7 +56,7 @@ lr = args.lr
 results = []
 results_save_path = os.path.join(base_dir, 'fed/results.csv')
 
-w_glob = None       # 参数，训练聚合时使用
+grads_glob = []     # 参数，训练聚合时使用
 loss_locals = []    # loss，训练聚合时使用
 edge_count = 0
 global_round = 0    # 当前全局模型所在轮数
@@ -95,7 +95,7 @@ def message_handle(client, info, edge_id):
     """
     消息处理，由accept_client()创建的线程进行调用
     """
-    global dict_users_train, dict_users_test, global_round, net_glob, w_glob, loss_locals,lr
+    global dict_users_train, dict_users_test, global_round, net_glob, grads_glob, loss_locals,lr
     send_msg(client, "连接成功".encode("utf-8"))
     local_round = global_round # 加入联邦学习的初始化
     """先用cloud代替edge模拟发数据吧"""
@@ -130,18 +130,18 @@ def message_handle(client, info, edge_id):
                 logging.debug(f"edge_id = {edge_id} 被选择")
                 # 接受来自边缘服务器的参数和loss
                 data = pickle.loads(recv_msg(client))
-                logging.debug(f"接收到来自 edge_id = {edge_id} 的 weight&loss")
+                logging.debug(f"接收到来自 edge_id = {edge_id} 的 grads&loss")
                 # 加入参数
-                w_local = data["w_local"]
-                if w_glob is None:
-                    w_glob = copy.deepcopy(w_local)
+                grads_local = data["grads_local"]
+                if len(grads_glob) == 0:
+                    grads_glob = copy.deepcopy(grads_local)
                 else:
-                    for k in w_glob.keys():
-                        w_glob[k] += w_local[k]
+                    for level in range(len(grads_local)):
+                        grads_glob[level] += grads_local[level]
                 # 加入loss
                 loss_local = data["loss_local"]
                 loss_locals.append(loss_local)
-                # logging.debug(len(loss_locals))
+                logging.debug(len(loss_locals))
             else:
                 send_msg(client, pickle.dumps({"choosen": True}))  
 
@@ -171,7 +171,6 @@ if __name__ == '__main__':
         # 第一轮需要初始化
         m = max(1, min(args.num_users, edge_count) * args.frac)    # 选择client的数量
         choosen_this_round = np.random.choice(range(edge_count+1), m, replace=False)
-        # logging.info(f"Round = {global_round} 选择 {choosen_this_round} 参与训练")
 
         while global_round <= args.epochs:
             """
@@ -186,9 +185,16 @@ if __name__ == '__main__':
             lr *= args.lr_decay
 
             # 更新全局梯度
-            for k in w_glob.keys():
-                w_glob[k] = torch.div(w_glob[k], m)
-            net_glob.load_state_dict(w_glob)
+            optimizer = torch.optim.SGD(net_glob.parameters(), lr=lr, momentum=args.momentum)
+            optimizer.zero_grad()
+            for level,para in enumerate(net_glob.parameters()):
+                grads_glob[level] = torch.div(grads_glob[level], m)
+                para.grad = grads_glob[level]
+
+            logging.debug(f"Groud = {global_round} the grad of para[0] is {next(net_glob.parameters()).grad}")
+            logging.debug(f"Before Step the para[0] is {next(net_glob.parameters())}")
+            optimizer.step()
+            logging.debug(f"After Step the para[0] is {next(net_glob.parameters())}")
             
             # 更新全局loss
             loss_avg = sum(loss_locals) / len(loss_locals)
@@ -203,9 +209,8 @@ if __name__ == '__main__':
             if (global_round + 1) % args.test_freq == 0:
                 net_glob.eval()
                 acc_test, loss_test = test_img(net_glob, dataset_test, args)
-                print('Round {:3d}, Average loss {:.3f}, Test loss {:.3f}, Test accuracy: {:.3f}'.format(
+                print('Round {:3d}, Average loss {:.3f}, Test loss {:.3f}, Test accuracy: {:.5f}'.format(
                     global_round, loss_avg, loss_test, acc_test))
-                    
 
                 if best_acc is None or acc_test > best_acc:
                     net_best = copy.deepcopy(net_glob)
@@ -224,7 +229,7 @@ if __name__ == '__main__':
                 torch.save(net_glob.state_dict(), model_save_path)
 
             # 进入下一轮
-            w_glob = None
+            grads_glob = []
             loss_locals = []
             logging.debug(f"进入下一轮： round = {global_round}")
             global_round += 1
