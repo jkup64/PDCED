@@ -72,12 +72,19 @@ class LocalUpdate(object):
                 loss.backward()
                 optimizer.step()
                 # 累积梯度记录
+   
                 if len(accumulated_grads_local) == 0:
                     for para in net.parameters():
                         accumulated_grads_local.append(para.grad.detach().clone())
                 else:
-                    for num, para in enumerate(net.parameters()):
-                        accumulated_grads_local[num] += para.grad
+                    for level, para in enumerate(net.parameters()):
+                        accumulated_grads_local[level] += para.grad
+                        # if self.args.momentum == 0:
+                        #     accumulated_grads_local[level] += para.grad
+                        # else:
+                        #     accumulated_grads_local[level] = para.grad + \
+                        #         self.args.momentum*accumulated_grads_local[level]
+                        
                 batch_loss.append(loss.item())
             epoch_loss.append(sum(batch_loss)/len(batch_loss))
         return accumulated_grads_local, sum(epoch_loss)/len(epoch_loss)

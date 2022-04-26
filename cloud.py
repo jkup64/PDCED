@@ -203,13 +203,13 @@ if __name__ == '__main__':
             # 选择下一轮参与的用户
             m = int(max(1, min(args.num_users, edge_count)*args.frac))    # 选择下一轮参与的用户
             choosen_this_round = np.random.choice(range(edge_count), m, replace=False)
-            logging.info(f"Round = {global_round} 选择 {choosen_this_round} 参与训练 lr = {lr}")
+            logging.info("Round = {:3d} 选择 {} 参与训练 lr = {:.3f}".format(global_round, choosen_this_round, lr))
 
             # test和save
             if (global_round + 1) % args.test_freq == 0:
                 net_glob.eval()
                 acc_test, loss_test = test_img(net_glob, dataset_test, args)
-                print('Round {:3d}, Average loss {:.3f}, Test loss {:.3f}, Test accuracy: {:.5f}'.format(
+                logging.info('Round:{:3d}, Avg loss {:.3f}, Test loss {:.3f}, Test accuracy: {:.3f}'.format(
                     global_round, loss_avg, loss_test, acc_test))
 
                 if best_acc is None or acc_test > best_acc:

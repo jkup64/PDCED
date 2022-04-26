@@ -75,20 +75,20 @@ if "__main__" == __name__:
         local_round = round_state_lr["round"]
         net_globa_state_dict = round_state_lr["state"]
         lr = round_state_lr["lr"]
-        logging.info(f"{local_round} 接收到来自cloud的全局模型参数")
+        logging.debug(f"{local_round} 接收到来自cloud的全局模型参数")
         net_local.load_state_dict(net_globa_state_dict)
         
         # 根据自己本轮是否被选中，是否进行局部训练
         if pickle.loads(recv_msg(edge_client))["choosen"] == True:
             # 训练，获得局部参数和loss, 并发送给cloud
-            logging.info(f"Round = {local_round} 参与训练")
+            # logging.info(f"Round = {local_round} 参与训练")
             local = LocalUpdate(args=args, dataset=dataset_train, idxs=idxs_train_local)
             grads_local, loss_local = local.train(net=net_local.to(args.device), lr=lr)
             send_msg(edge_client, pickle.dumps({
                 "grads_local": grads_local,
                 "loss_local": loss_local
             }))
-            logging.info(f"Round = {local_round} loss_local = {loss_local}")
+            logging.info("Round = {:>4d} 参与训练 loss_local = {:.3f}".format(local_round, loss_local))
             logging.debug(f"The grads_local[0] is {grads_local[0]}")
             logging.debug(f"Round = {local_round} 向server发送 累积grads&loss")
         else:
