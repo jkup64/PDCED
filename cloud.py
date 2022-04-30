@@ -1,8 +1,4 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# Python version: 3.9
 
-from asyncio.constants import SENDFILE_FALLBACK_READBUFFER_SIZE
 import copy
 import pickle
 import socket,ssl
