@@ -8,8 +8,9 @@ import time
 import numpy as np
 import pandas as pd
 import torch
+from zmq import THREAD_AFFINITY_CPU_ADD
 from utils.options import args_parser
-from utils.train_utils import get_data, get_model
+from utils.train_utils import get_data, get_data_without_sample, get_model
 from utils.send_recv_utils import *
 from models.Update import LocalUpdate
 from models.test import test_img
@@ -40,13 +41,10 @@ def init():
     logging.info(welcome_msg)
 
     # 接收训练数据，后续应该改为在另一个线程中开个socket接收
-    from torchvision import datasets, transforms
-    trans_mnist = transforms.Compose([transforms.ToTensor(),
-                                      transforms.Normalize((0.1307,), (0.3081,))])
-    dataset_train = datasets.MNIST(
-        'data/mnist/', train=True, download=True, transform=trans_mnist)
-    dataset_test = datasets.MNIST(
-        'data/mnist/', train=False, download=True, transform=trans_mnist)
+    """
+    数据集得根据具体任务划分，待修改
+    """
+    dataset_train, dataset_test = get_data_without_sample(args)
 
     dict_user = pickle.loads(recv_msg(edge_client))
     idxs_train_local = dict_user["train"]
@@ -90,9 +88,9 @@ if "__main__" == __name__:
                 "loss_local": loss_local
             }))
             
-            if write_one_tensor == True:
-                np.save("tmp_grad.npy",grads_local)
-                write_one_tensor = False
+            # if write_one_tensor == True:
+            #     np.save("tmp_grad.npy",grads_local)
+            #     write_one_tensor = False
 
 
             logging.info("Round = {:>4d} 参与训练 loss_local = {:.3f}".format(local_round, loss_local))

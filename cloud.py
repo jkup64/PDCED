@@ -104,7 +104,6 @@ def message_handle(client, info, edge_id):
         "test": dict_users_test[edge_id]
     }
     send_msg(client, pickle.dumps(dict_user))
-
     while True:
         try:
             """
@@ -185,6 +184,9 @@ if __name__ == '__main__':
             lr *= args.lr_decay
 
             # 更新全局梯度
+            """
+            PEFL需要修改的部分——传入（累计梯度），输出模型参数
+            """
             optimizer = torch.optim.SGD(net_glob.parameters(), lr=lr, momentum=args.momentum)
             optimizer.zero_grad()
             for level,para in enumerate(net_glob.parameters()):
