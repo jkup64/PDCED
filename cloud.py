@@ -189,8 +189,7 @@ if __name__ == '__main__':
             optimizer.zero_grad()
             for level,para in enumerate(net_glob.parameters()):
                 grads_glob[level] = torch.div(grads_glob[level], m)
-                para.grad = grads_glob[level]
-
+                para.grad = grads_glob[level].to(args.device)
             logging.debug(f"Groud = {global_round} the grad of para[0] is {next(net_glob.parameters()).grad}")
             logging.debug(f"Before Step the para[0] is {next(net_glob.parameters())}")
             optimizer.step()

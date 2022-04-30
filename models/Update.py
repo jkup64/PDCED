@@ -3,6 +3,7 @@
 # Python version: 3.6
 
 from itertools import accumulate
+from bs4 import TemplateString
 from numpy import imag
 import torch
 from torch import nn
@@ -36,7 +37,6 @@ class LocalUpdate(object):
         net.train()
         # train and update
         optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=self.args.momentum)
-
         epoch_loss = []
         if self.pretrain:
             local_eps = self.args.local_ep_pretrain
@@ -71,22 +71,21 @@ class LocalUpdate(object):
                 loss = self.loss_func(log_probs, labels)
                 loss.backward()
                 optimizer.step()
+                
                 # 累积梯度记录
-   
                 if len(accumulated_grads_local) == 0:
                     for para in net.parameters():
+                        # 注意要从计算图分离出来并并保存到新的内存地址
                         accumulated_grads_local.append(para.grad.detach().clone())
                 else:
                     for level, para in enumerate(net.parameters()):
                         accumulated_grads_local[level] += para.grad
-                        # if self.args.momentum == 0:
-                        #     accumulated_grads_local[level] += para.grad
-                        # else:
-                        #     accumulated_grads_local[level] = para.grad + \
-                        #         self.args.momentum*accumulated_grads_local[level]
                         
                 batch_loss.append(loss.item())
             epoch_loss.append(sum(batch_loss)/len(batch_loss))
+
+        # 从GPU转移到CPU:协议处理时使用numpy和其他库处理
+        accumulated_grads_local = [grad.cpu() for grad in accumulated_grads_local]
         return accumulated_grads_local, sum(epoch_loss)/len(epoch_loss)
 
 

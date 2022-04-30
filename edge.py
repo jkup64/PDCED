@@ -66,6 +66,7 @@ if "__main__" == __name__:
     args, edge_client, dataset_train, dataset_test,\
          idxs_train_local, idxs_test_local,net_local = init()
 
+    write_one_tensor = True
     while True:
         """
         每轮训练时，先从cloud接受全局参数，然后根据是否被选中选择是否进行训练并更新参数，然后上传局部参数和loss
@@ -88,6 +89,12 @@ if "__main__" == __name__:
                 "grads_local": grads_local,
                 "loss_local": loss_local
             }))
+            
+            if write_one_tensor == True:
+                np.save("tmp_grad.npy",grads_local)
+                write_one_tensor = False
+
+
             logging.info("Round = {:>4d} 参与训练 loss_local = {:.3f}".format(local_round, loss_local))
             logging.debug(f"The grads_local[0] is {grads_local[0]}")
             logging.debug(f"Round = {local_round} 向server发送 累积grads&loss")

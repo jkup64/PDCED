@@ -8,18 +8,18 @@ def args_parser():
     parser = argparse.ArgumentParser()
     # federated arguments
     parser.add_argument('--epochs', type=int, default=1000, help="rounds of training")
-    parser.add_argument('--num_users', type=int, default=5, help="number of users: K")
+    parser.add_argument('--num_users', type=int, default=2, help="number of users: K")
     parser.add_argument('--shard_per_user', type=int, default=2, help="classes per user")
     parser.add_argument('--frac', type=float, default=1.0, help="the fraction of clients: C")
     parser.add_argument('--local_ep', type=int, default=1, help="the number of local epochs: E")
-    parser.add_argument('--local_bs', type=int, default=8, help="local batch size: B")
+    parser.add_argument('--local_bs', type=int, default=16, help="local batch size: B")
     parser.add_argument('--bs', type=int, default=16, help="test batch size")
     parser.add_argument('--lr', type=float, default=0.01, help="learning rate")
     parser.add_argument('--momentum', type=float, default=0.5, help="SGD momentum (default: 0.5)")
     parser.add_argument('--split', type=str, default='user', help="train-test split type, user or sample")
     parser.add_argument('--grad_norm', action='store_true', help='use_gradnorm_avging')
     parser.add_argument('--local_ep_pretrain', type=int, default=0, help="the number of pretrain local ep")
-    parser.add_argument('--lr_decay', type=float, default=0.999, help="learning rate decay per round")
+    parser.add_argument('--lr_decay', type=float, default=0.99, help="learning rate decay per round")
 
     # model arguments
     parser.add_argument('--model', type=str, default='mlp', help='model name')
